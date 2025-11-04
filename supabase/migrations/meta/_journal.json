@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1762233952922,
+      "tag": "0000_glossy_switch",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1762234283217,
+      "tag": "0001_supreme_dormammu",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1762234786700,
+      "tag": "0002_majestic_marvel_zombies",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1762251101068,
+      "tag": "0003_broad_the_stranger",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1762251639609,
+      "tag": "0004_absent_hitman",
+      "breakpoints": true
+    }
+  ]
+}

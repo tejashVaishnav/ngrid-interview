@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { AuthButton } from "@/components/layout/AuthButton";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -21,12 +22,17 @@ export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
-}>) {
+}>) { 
   return (
     <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <div className="flex items-center justify-between w-full py-4 px-10">
+
+          <h1 className="text-3xl">Mini Ecommerce</h1>
+          <AuthButton /> 
+        </div>
         {children}
       </body>
     </html>
