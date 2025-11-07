@@ -7,12 +7,12 @@ export default async function ProtectedPage() {
   const session = await checkAuth()
 
   const user = await getUser({ email: session.user?.email as string })
-  console.log(user)
+  console.log(user, "user from dashboard page")
 
 
   return (
     <div className="">
-      <DashboardPage />
+      <DashboardPage user={user} />
     </div>
   );
 }

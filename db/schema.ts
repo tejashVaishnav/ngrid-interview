@@ -9,8 +9,6 @@ import {
   timestamp,
 } from "drizzle-orm/pg-core"
 
-
-
 export const users = pgTable("user", {
   id: text("id")
     .primaryKey()
@@ -21,7 +19,6 @@ export const users = pgTable("user", {
   image: text("image"),
 })
 
-
 export const teams = pgTable("team", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   name: text("name"),
@@ -31,7 +28,7 @@ export const teams = pgTable("team", {
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow(),
 })
 
-// First, create a join table for the many-to-many relationship
+// Join table for the many-to-many relationship
 export const usersToTeams = pgTable('users_to_teams', {
   userId: text('user_id')
     .notNull()
@@ -40,29 +37,7 @@ export const usersToTeams = pgTable('users_to_teams', {
     .notNull()
     .references(() => teams.id, { onDelete: 'cascade' }),
 }, (table) => ({
-  // Composite primary key
   pk: primaryKey({ columns: [table.userId, table.teamId] }),
-}));
-
-// Update the relations
-export const usersRelations = relations(users, ({ many }) => ({
-  teams: many(usersToTeams),
-  projects: many(projects),  // Add this line
-}));
-export const teamsRelations = relations(teams, ({ many }) => ({
-  users: many(usersToTeams),
-}));
-
-// Relation for the join table
-export const usersToTeamsRelations = relations(usersToTeams, ({ one }) => ({
-  team: one(teams, {
-    fields: [usersToTeams.teamId],
-    references: [teams.id],
-  }),
-  user: one(users, {
-    fields: [usersToTeams.userId],
-    references: [users.id],
-  }),
 }));
 
 export const projects = pgTable("project", {
@@ -75,6 +50,31 @@ export const projects = pgTable("project", {
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow(),
 })
 
+// FIXED: User relations - teams through join table, projects direct
+export const usersRelations = relations(users, ({ many }) => ({
+  usersToTeams: many(usersToTeams),  // Changed from 'teams' to 'usersToTeams'
+  projects: many(projects),
+}));
+
+// FIXED: Team relations - consolidated into one
+export const teamsRelations = relations(teams, ({ many }) => ({
+  usersToTeams: many(usersToTeams),  // Changed from 'users' to 'usersToTeams'
+  projects: many(projects),
+}));
+
+// Join table relations
+export const usersToTeamsRelations = relations(usersToTeams, ({ one }) => ({
+  team: one(teams, {
+    fields: [usersToTeams.teamId],
+    references: [teams.id],
+  }),
+  user: one(users, {
+    fields: [usersToTeams.userId],
+    references: [users.id],
+  }),
+}));
+
+// Project relations
 export const projectsRelations = relations(projects, ({ one }) => ({
   team: one(teams, {
     fields: [projects.teamid],
@@ -84,12 +84,6 @@ export const projectsRelations = relations(projects, ({ one }) => ({
     fields: [projects.createdby],
     references: [users.id],
   }),
-}));
-
-// Update the teams relations to include projects
-export const teamsProjectRelations = relations(teams, ({ many }) => ({
-  users: many(usersToTeams),
-  projects: many(projects), // Add this line to the existing teamsRelations
 }));
 
 export const accounts = pgTable(
