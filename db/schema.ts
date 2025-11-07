@@ -1,19 +1,15 @@
+import type { AdapterAccountType } from "@auth/core/adapters"
+import { relations } from "drizzle-orm"
 import {
   boolean,
-  timestamp,
-  pgTable,
-  text,
-  primaryKey,
   integer,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
 } from "drizzle-orm/pg-core"
-import postgres from "postgres"
-import { drizzle } from "drizzle-orm/postgres-js"
-import type { AdapterAccountType } from "@auth/core/adapters"
 
-const connectionString = "postgres://postgres:postgres@localhost:5432/drizzle"
-const pool = postgres(connectionString, { max: 1 })
 
-export const db = drizzle(pool)
 
 export const users = pgTable("user", {
   id: text("id")
@@ -24,6 +20,77 @@ export const users = pgTable("user", {
   emailVerified: timestamp("emailVerified", { mode: "date" }),
   image: text("image"),
 })
+
+
+export const teams = pgTable("team", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  name: text("name"),
+  slug: text("slug").unique(),
+  createdby: text("createdby").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow(),
+})
+
+// First, create a join table for the many-to-many relationship
+export const usersToTeams = pgTable('users_to_teams', {
+  userId: text('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  teamId: text('team_id')
+    .notNull()
+    .references(() => teams.id, { onDelete: 'cascade' }),
+}, (table) => ({
+  // Composite primary key
+  pk: primaryKey({ columns: [table.userId, table.teamId] }),
+}));
+
+// Update the relations
+export const usersRelations = relations(users, ({ many }) => ({
+  teams: many(usersToTeams),
+  projects: many(projects),  // Add this line
+}));
+export const teamsRelations = relations(teams, ({ many }) => ({
+  users: many(usersToTeams),
+}));
+
+// Relation for the join table
+export const usersToTeamsRelations = relations(usersToTeams, ({ one }) => ({
+  team: one(teams, {
+    fields: [usersToTeams.teamId],
+    references: [teams.id],
+  }),
+  user: one(users, {
+    fields: [usersToTeams.userId],
+    references: [users.id],
+  }),
+}));
+
+export const projects = pgTable("project", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  name: text("name"),
+  slug: text("slug"),
+  createdby: text("createdby").notNull().references(() => users.id, { onDelete: "cascade" }),
+  teamid: text("teamid").notNull().references(() => teams.id, { onDelete: "cascade" }),
+  createdAt: timestamp("createdAt", { mode: "date" }).defaultNow(),
+  updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow(),
+})
+
+export const projectsRelations = relations(projects, ({ one }) => ({
+  team: one(teams, {
+    fields: [projects.teamid],
+    references: [teams.id],
+  }),
+  creator: one(users, {
+    fields: [projects.createdby],
+    references: [users.id],
+  }),
+}));
+
+// Update the teams relations to include projects
+export const teamsProjectRelations = relations(teams, ({ many }) => ({
+  users: many(usersToTeams),
+  projects: many(projects), // Add this line to the existing teamsRelations
+}));
 
 export const accounts = pgTable(
   "account",
@@ -97,18 +164,3 @@ export const authenticators = pgTable(
     },
   ]
 )
-
-export const products = pgTable("products", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  name: text("name").notNull(),
-  price: integer("price").notNull(),
-  description: text("description").notNull(),
-  productOwner: text("productOwner").notNull().references(() => users.id, { onDelete: "cascade" }),
-  createdAt: timestamp("createdAt", { mode: "date" }).notNull().defaultNow(),
-})
-
-export const productImages = pgTable("productImages", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  productId: text("productId").notNull().references(() => products.id, { onDelete: "cascade" }),
-  image: text("image").notNull(),
-})
