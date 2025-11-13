@@ -7,6 +7,8 @@ import { useState } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
 import { UserType } from "@/requests/user"
+import Link from "next/link"
+import { formatTimestamp } from "@/lib/utils"
 const files = [
   { name: 'Untitled File', location: '', created: '19 min ago', edited: '19 min ago', comments: 0 },
   { name: 'Untitled File', location: '', created: '2 hrs ago', edited: '2 hrs ago', comments: 0 },
@@ -39,7 +41,6 @@ export default function Dashboard({ user }: { user: UserType }) {
     try {
       const res = await createProject("untitled", "untitled", user?.id as string, user?.usersToTeams?.[0].team?.id as string)
       if (res) {
-        console.log(res, "-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
         router.push(`/project/${res[0].id}`)
       }
     } catch (error) {
@@ -52,7 +53,7 @@ export default function Dashboard({ user }: { user: UserType }) {
   return (
     <div className="min-h-screen bg-white">
       {/* Header */}
-      <header className="border-b border-gray-200 px-8 py-6">
+      <header className="border-b border-gray-200 px-8 py-1">
         <div className="flex items-center justify-between gap-8">
           {/* Tabs */}
           <div className="flex gap-8">
@@ -130,9 +131,9 @@ export default function Dashboard({ user }: { user: UserType }) {
           {/* Table */}
           <div className="w-full">
             {/* Header */}
-            <div className="grid grid-cols-[2fr_2fr_1.5fr_1.5fr_1fr_1fr] gap-4 px-6 py-3 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
-              <div>Name</div>
-              <div>Location</div>
+            <div className="grid grid-cols-7 gap-4 px-6 py-3 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
+              <div className="col-span-4">Name</div>
+
               <div>Created</div>
               <div className="flex items-center gap-1">
                 <span>Edited</span>
@@ -140,21 +141,20 @@ export default function Dashboard({ user }: { user: UserType }) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </div>
-              <div>Comments</div>
+
               <div>Author</div>
             </div>
 
             {/* Rows */}
             {user?.usersToTeams[0].team?.projects?.map((file, index) => (
-              <div
+              <Link
+                href={`/project/${file.id}`}
                 key={index}
-                className="grid grid-cols-[2fr_2fr_1.5fr_1.5fr_1fr_1fr] gap-4 px-6 py-4 border-b border-gray-100 hover:bg-gray-50 items-center group"
+                className="grid grid-cols-7 gap-4 px-6 py-4 border-b border-gray-100 hover:bg-gray-50 items-center group"
               >
-                <div className="text-sm text-gray-900">{file.name}</div>
-                <div className="text-sm text-gray-500">{file.slug}</div>
-                <div className="text-sm text-gray-500">{file.createdAt?.toString()}</div>
-                <div className="text-sm text-gray-500">{file.updatedAt?.toString()}</div>
-                <div className="text-sm text-gray-500"> </div>
+                <div className="text-sm text-gray-900 col-span-4">{file.name}</div>
+                <div className="text-xs  text-gray-500 col-span-1">{formatTimestamp(file.createdAt?.getTime() || 0)}</div>
+                <div className="text-xs text-gray-500 col-span-1">{formatTimestamp(file.updatedAt?.getTime() || 0)}</div>
                 <div className="flex items-center justify-between">
                   <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-medium">
                     ts
@@ -167,7 +167,7 @@ export default function Dashboard({ user }: { user: UserType }) {
                     </svg>
                   </button>
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         </div>

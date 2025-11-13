@@ -1,7 +1,10 @@
 "use client"
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Circle, Square, Triangle, Pen, Hand, Eraser, Minus, RotateCcw, RotateCw, Crosshair, Users } from 'lucide-react';
+import { Circle, Square, Triangle, Pen, Hand, Eraser, Minus, RotateCcw, RotateCw, Crosshair, Users, Loader, Loader2, MousePointer } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
+import { User } from 'next-auth';
+import { UserType } from '@/requests/user';
+import { BoardNavbar } from './boardNavbar';
 
 type Tool = 'pen' | 'eraser' | 'line' | 'rectangle' | 'circle' | 'triangle' | 'select' | 'pan';
 
@@ -32,11 +35,16 @@ interface Cursor {
 }
 
 // Supabase configuration
-const SUPABASE_URL = 'YOUR_SUPABASE_URL';
-const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const ROOM_ID = 'canvas-room-1'; // You can make this dynamic
 
-const InfiniteCanvas: React.FC = () => {
+
+interface InfiniteCanvasProps {
+  projectId: string;
+  user: UserType// dynamically provided project ID
+}
+const InfiniteCanvas: React.FC<InfiniteCanvasProps> = ({ projectId, user }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [tool, setTool] = useState<Tool>('pen');
   const [color, setColor] = useState('#000000');
@@ -52,50 +60,46 @@ const InfiniteCanvas: React.FC = () => {
   const [useFill, setUseFill] = useState(false);
   const [history, setHistory] = useState<DrawingElement[][]>([[]]);
   const [historyIndex, setHistoryIndex] = useState(0);
-  
+
+  const [selectedElement, setSelectedElement] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState<Point>({ x: 0, y: 0 });
+  const [elementOffset, setElementOffset] = useState<Point>({ x: 0, y: 0 });
+
   // Collaboration state
   const [supabase, setSupabase] = useState<any>(null);
-  const [userId, setUserId] = useState<string>('');
-  const [userName, setUserName] = useState<string>('');
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [userId, setUserId] = useState<string>(user?.id as string || "");
+  const [userName, setUserName] = useState<string>(user?.name as string || "");
   const [isConnected, setIsConnected] = useState(false);
   const [activeCursors, setActiveCursors] = useState<Map<string, Cursor>>(new Map());
-  const [showSetup, setShowSetup] = useState(true);
   const channelRef = useRef<any>(null);
   const cursorThrottleRef = useRef<number>(0);
 
   // Initialize Supabase client
-  const initializeSupabase = useCallback((url: string, key: string, name: string) => {
+  useEffect(() => {
     try {
-      const client = createClient(url, key);
+      const client = createClient("https://nlbfixtjfillqtokdgku.supabase.co", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sYmZpeHRqZmlsbHF0b2tkZ2t1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIzMzQyNjEsImV4cCI6MjA3NzkxMDI2MX0.e2bHHH46vp0lYsmae6jT_B8R4pZjn08AGI3Sk-0IxmE");
       setSupabase(client);
-      
-      // Generate a unique user ID
-      const id = `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      setUserId(id);
-      setUserName(name || `User ${id.slice(-4)}`);
-      setShowSetup(false);
-      
-      return client;
     } catch (error) {
       console.error('Failed to initialize Supabase:', error);
       alert('Failed to connect to Supabase. Please check your credentials.');
-      return null;
+    } finally {
     }
   }, []);
 
   // Load initial canvas state
   const loadCanvasState = useCallback(async () => {
     if (!supabase) return;
-    
     try {
       const { data, error } = await supabase
         .from('canvas_elements')
         .select('*')
-        .eq('room_id', ROOM_ID)
+        .eq('room_id', projectId)
         .order('timestamp', { ascending: true });
 
       if (error) throw error;
-      
+
       if (data && data.length > 0) {
         const loadedElements = data.map((item: any) => ({
           id: item.element_id,
@@ -113,18 +117,22 @@ const InfiniteCanvas: React.FC = () => {
       }
     } catch (error) {
       console.error('Error loading canvas state:', error);
+      alert('Failed to load canvas state. Please try again.');
+      setIsLoading(false)
+    } finally {
+      setIsLoading(false)
     }
   }, [supabase]);
 
   // Save element to Supabase
   const saveElementToSupabase = useCallback(async (element: DrawingElement) => {
     if (!supabase || !userId) return;
-    
+
     try {
       const { error } = await supabase
         .from('canvas_elements')
         .insert({
-          room_id: ROOM_ID,
+          room_id: projectId,
           element_id: element.id,
           user_id: userId,
           tool: element.tool,
@@ -146,12 +154,12 @@ const InfiniteCanvas: React.FC = () => {
   // Clear canvas in Supabase
   const clearCanvasInSupabase = useCallback(async () => {
     if (!supabase) return;
-    
+
     try {
       const { error } = await supabase
         .from('canvas_elements')
         .delete()
-        .eq('room_id', ROOM_ID);
+        .eq('room_id', projectId);
 
       if (error) throw error;
     } catch (error) {
@@ -163,7 +171,7 @@ const InfiniteCanvas: React.FC = () => {
   useEffect(() => {
     if (!supabase || !userId) return;
 
-    const channel = supabase.channel(`room:${ROOM_ID}`)
+    const channel = supabase.channel(`room:${projectId}`)
       .on('broadcast', { event: 'drawing' }, (payload: any) => {
         if (payload.payload.userId !== userId) {
           const element = payload.payload.element;
@@ -189,6 +197,11 @@ const InfiniteCanvas: React.FC = () => {
             });
             return newCursors;
           });
+        }
+      }).on('broadcast', { event: 'update' }, (payload: any) => {
+        if (payload.payload.userId !== userId) {
+          const element = payload.payload.element;
+          setElements(prev => prev.map(e => e.id === element.id ? element : e));
         }
       })
       .on('broadcast', { event: 'clear' }, (payload: any) => {
@@ -231,7 +244,7 @@ const InfiniteCanvas: React.FC = () => {
   // Broadcast cursor position
   const broadcastCursor = useCallback((x: number, y: number) => {
     if (!channelRef.current || !userId) return;
-    
+
     const now = Date.now();
     if (now - cursorThrottleRef.current < 50) return; // Throttle to 20 updates/sec
     cursorThrottleRef.current = now;
@@ -246,7 +259,7 @@ const InfiniteCanvas: React.FC = () => {
   // Broadcast drawing element
   const broadcastElement = useCallback((element: DrawingElement) => {
     if (!channelRef.current || !userId) return;
-    
+
     channelRef.current.send({
       type: 'broadcast',
       event: 'drawing',
@@ -264,7 +277,120 @@ const InfiniteCanvas: React.FC = () => {
     };
   }, [offset, scale]);
 
-  const drawElement = useCallback((ctx: CanvasRenderingContext2D, element: DrawingElement) => {
+  
+  // Check if point is inside element
+
+  const isPointInElement = useCallback((point: Point, element: DrawingElement): boolean => {
+    if (element.tool === 'rectangle' && element.startPoint && element.endPoint) {
+      const minX = Math.min(element.startPoint.x, element.endPoint.x);
+      const maxX = Math.max(element.startPoint.x, element.endPoint.x);
+      const minY = Math.min(element.startPoint.y, element.endPoint.y);
+      const maxY = Math.max(element.startPoint.y, element.endPoint.y);
+      return point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY;
+    } else if (element.tool === 'circle' && element.startPoint && element.endPoint) {
+      const radius = Math.sqrt(
+        Math.pow(element.endPoint.x - element.startPoint.x, 2) +
+        Math.pow(element.endPoint.y - element.startPoint.y, 2)
+      );
+      const distance = Math.sqrt(
+        Math.pow(point.x - element.startPoint.x, 2) +
+        Math.pow(point.y - element.startPoint.y, 2)
+      );
+      return distance <= radius;
+    } else if (element.tool === 'triangle' && element.startPoint && element.endPoint) {
+      const width = element.endPoint.x - element.startPoint.x;
+      const height = element.endPoint.y - element.startPoint.y;
+      const p1 = { x: element.startPoint.x + width / 2, y: element.startPoint.y };
+      const p2 = { x: element.startPoint.x, y: element.startPoint.y + height };
+      const p3 = { x: element.startPoint.x + width, y: element.startPoint.y + height };
+      
+      const sign = (p1: Point, p2: Point, p3: Point) => {
+        return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+      };
+      
+      const d1 = sign(point, p1, p2);
+      const d2 = sign(point, p2, p3);
+      const d3 = sign(point, p3, p1, point);
+      
+      const hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+      const hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+      
+      return !(hasNeg && hasPos);
+    } else if (element.tool === 'line' && element.startPoint && element.endPoint) {
+      const lineLength = Math.sqrt(
+        Math.pow(element.endPoint.x - element.startPoint.x, 2) +
+        Math.pow(element.endPoint.y - element.startPoint.y, 2)
+      );
+      const distance = Math.abs(
+        (element.endPoint.y - element.startPoint.y) * point.x -
+        (element.endPoint.x - element.startPoint.x) * point.y +
+        element.endPoint.x * element.startPoint.y -
+        element.endPoint.y * element.startPoint.x
+      ) / lineLength;
+      return distance <= element.thickness + 5;
+    } else if (element.tool === 'pen' && element.points.length > 0) {
+      // Check if point is near any segment of the path
+      for (let i = 0; i < element.points.length - 1; i++) {
+        const p1 = element.points[i];
+        const p2 = element.points[i + 1];
+        const lineLength = Math.sqrt(
+          Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2)
+        );
+        if (lineLength === 0) continue;
+        const distance = Math.abs(
+          (p2.y - p1.y) * point.x - (p2.x - p1.x) * point.y +
+          p2.x * p1.y - p2.y * p1.x
+        ) / lineLength;
+        if (distance <= element.thickness + 5) return true;
+      }
+    }
+    return false;
+  }, []);
+
+  const moveElement = useCallback((elementId: string, dx: number, dy: number) => {
+    setElements(prev => prev.map(el => {
+      if (el.id === elementId) {
+        let updatedElement;
+        if (el.tool === 'pen' || el.tool === 'eraser') {
+          updatedElement = {
+            ...el,
+            points: el.points.map(p => ({ x: p.x + dx, y: p.y + dy }))
+          };
+        } else {
+          updatedElement = {
+            ...el,
+            startPoint: el.startPoint ? { x: el.startPoint.x + dx, y: el.startPoint.y + dy } : undefined,
+            endPoint: el.endPoint ? { x: el.endPoint.x + dx, y: el.endPoint.y + dy } : undefined
+          };
+        }
+        return updatedElement;
+      }
+      return el;
+    }));
+  }, []);
+
+
+  const updateElementInSupabase = useCallback(async (element: DrawingElement) => {
+    if (!supabase || !userId) return;
+  
+    try {
+      const { error } = await supabase
+        .from('canvas_elements')
+        .update({
+          points: element.points,
+          start_point: element.startPoint,
+          end_point: element.endPoint,
+        })
+        .eq('element_id', element.id)
+        .eq('room_id', projectId);
+  
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error updating element:', error);
+    }
+  }, [supabase, userId, projectId]);
+
+  const drawElement = useCallback((ctx: CanvasRenderingContext2D, element: DrawingElement, isSelected: boolean = false) => {
     ctx.strokeStyle = element.color;
     ctx.lineWidth = element.thickness;
     ctx.lineCap = 'round';
@@ -288,7 +414,7 @@ const InfiniteCanvas: React.FC = () => {
     } else if (element.tool === 'rectangle' && element.startPoint && element.endPoint) {
       const width = element.endPoint.x - element.startPoint.x;
       const height = element.endPoint.y - element.startPoint.y;
-      
+
       if (element.fillColor) {
         ctx.fillStyle = element.fillColor;
         ctx.fillRect(element.startPoint.x, element.startPoint.y, width, height);
@@ -320,22 +446,44 @@ const InfiniteCanvas: React.FC = () => {
       }
       ctx.stroke();
     }
+
+
+    if (isSelected) {
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      
+      if (element.tool === 'pen' || element.tool === 'eraser') {
+        const minX = Math.min(...element.points.map(p => p.x));
+        const maxX = Math.max(...element.points.map(p => p.x));
+        const minY = Math.min(...element.points.map(p => p.y));
+        const maxY = Math.max(...element.points.map(p => p.y));
+        ctx.strokeRect(minX - 10, minY - 10, maxX - minX + 20, maxY - minY + 20);
+      } else if (element.startPoint && element.endPoint) {
+        const minX = Math.min(element.startPoint.x, element.endPoint.x);
+        const maxX = Math.max(element.startPoint.x, element.endPoint.x);
+        const minY = Math.min(element.startPoint.y, element.endPoint.y);
+        const maxY = Math.max(element.startPoint.y, element.endPoint.y);
+        ctx.strokeRect(minX - 10, minY - 10, maxX - minX + 20, maxY - minY + 20);
+      }
+      ctx.setLineDash([]);
+    }
   }, []);
 
   const drawGrid = useCallback((ctx: CanvasRenderingContext2D) => {
     const gridSize = 20 * scale;
     const dotSize = 1;
     const dotColor = '#e5e7eb';
-    
+
     const visibleWidth = ctx.canvas.width / scale;
     const visibleHeight = ctx.canvas.height / scale;
-    
+
     const startX = Math.floor(-offset.x / gridSize) * gridSize;
     const startY = Math.floor(-offset.y / gridSize) * gridSize;
-    
+
     const endX = startX + visibleWidth + gridSize * 2;
     const endY = startY + visibleHeight + gridSize * 2;
-    
+
     ctx.fillStyle = dotColor;
     for (let x = startX; x < endX; x += gridSize) {
       for (let y = startY; y < endY; y += gridSize) {
@@ -349,7 +497,7 @@ const InfiniteCanvas: React.FC = () => {
   const drawCursors = useCallback((ctx: CanvasRenderingContext2D) => {
     activeCursors.forEach((cursor) => {
       ctx.save();
-      
+
       // Draw cursor pointer
       ctx.fillStyle = cursor.color;
       ctx.beginPath();
@@ -359,14 +507,14 @@ const InfiniteCanvas: React.FC = () => {
       ctx.lineTo(cursor.x + 6, cursor.y + 18);
       ctx.closePath();
       ctx.fill();
-      
+
       // Draw user name label
       ctx.font = '12px sans-serif';
       ctx.fillStyle = '#fff';
       ctx.fillRect(cursor.x + 15, cursor.y + 5, ctx.measureText(cursor.name).width + 8, 18);
       ctx.fillStyle = cursor.color;
       ctx.fillText(cursor.name, cursor.x + 19, cursor.y + 17);
-      
+
       ctx.restore();
     });
   }, [activeCursors]);
@@ -379,22 +527,25 @@ const InfiniteCanvas: React.FC = () => {
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     ctx.save();
     ctx.translate(offset.x, offset.y);
     ctx.scale(scale, scale);
-    
+
     drawGrid(ctx);
-    
+
     elements.forEach(element => drawElement(ctx, element));
     if (currentElement) {
       drawElement(ctx, currentElement);
     }
-    
+
     drawCursors(ctx);
-    
+    elements.forEach(element => drawElement(ctx, element, element.id === selectedElement));
+    if (currentElement) {
+      drawElement(ctx, currentElement);
+    }
     ctx.restore();
-  }, [elements, currentElement, offset, scale, drawElement, drawGrid, drawCursors]);
+  }, [elements, currentElement, offset, scale, drawElement, drawGrid, drawCursors,selectedElement]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -411,10 +562,30 @@ const InfiniteCanvas: React.FC = () => {
       setLastPanPoint({ x: e.clientX, y: e.clientY });
       return;
     }
-    
-    if (tool === 'select') return;
+
+     
 
     const mousePos = getMousePos(e);
+    if (tool === 'select') {
+      // Check if clicking on existing element
+      const clickedElement = [...elements].reverse().find(el => isPointInElement(mousePos, el));
+      
+      if (clickedElement) {
+        setSelectedElement(clickedElement.id);
+        setIsDragging(true);
+        setDragStart(mousePos);
+        
+        // Calculate offset between click point and element position
+        if (clickedElement.startPoint) {
+          setElementOffset({
+            x: mousePos.x - clickedElement.startPoint.x,
+            y: mousePos.y - clickedElement.startPoint.y
+          });
+        }
+      } else {
+        setSelectedElement(null);
+      }
+    }
     const newElement: DrawingElement = {
       id: `${userId}-${Date.now()}`,
       tool,
@@ -427,14 +598,14 @@ const InfiniteCanvas: React.FC = () => {
       userId,
       timestamp: Date.now()
     };
-    
+
     setCurrentElement(newElement);
     setIsDrawing(true);
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const mousePos = getMousePos(e);
-    
+
     // Broadcast cursor position
     if (isConnected) {
       broadcastCursor(mousePos.x, mousePos.y);
@@ -447,6 +618,22 @@ const InfiniteCanvas: React.FC = () => {
       setLastPanPoint({ x: e.clientX, y: e.clientY });
       return;
     }
+
+    if (tool === 'select' && isDragging && selectedElement) {
+      const dx = mousePos.x - dragStart.x;
+      const dy = mousePos.y - dragStart.y;
+      moveElement(selectedElement, dx, dy);
+
+      const element = elements.find(el => el.id === selectedElement);
+      if (element) {
+        broadcastElement(element);
+      }
+      
+      setDragStart(mousePos);
+      redraw();
+      return;
+    }
+
 
     if (!isDrawing || !currentElement) return;
 
@@ -475,6 +662,16 @@ const InfiniteCanvas: React.FC = () => {
       setIsPanning(false);
       return;
     }
+     if (isDragging && selectedElement) {
+    setIsDragging(false);
+    // Save and broadcast the moved element
+    const movedElement = elements.find(el => el.id === selectedElement);
+    if (movedElement) {
+      updateElementInSupabase(movedElement);
+      broadcastElement(movedElement);
+    }
+    return;
+  }
 
     if (currentElement) {
       const finalElement = { ...currentElement };
@@ -496,7 +693,7 @@ const InfiniteCanvas: React.FC = () => {
     setElements([]);
     setCurrentElement(null);
     await clearCanvasInSupabase();
-    
+
     if (channelRef.current) {
       channelRef.current.send({
         type: 'broadcast',
@@ -531,7 +728,7 @@ const InfiniteCanvas: React.FC = () => {
         e.preventDefault();
       }
     };
-    
+
     const canvas = canvasRef.current;
     if (canvas) {
       canvas.addEventListener('mousedown', preventDefault);
@@ -541,110 +738,55 @@ const InfiniteCanvas: React.FC = () => {
     }
   }, []);
 
-  // Setup modal
-  if (showSetup) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-gray-50">
-        <div className="bg-white p-8 rounded-lg shadow-lg max-w-md w-full">
-          <h2 className="text-2xl font-bold mb-4">Setup Collaborative Canvas</h2>
-          <p className="text-gray-600 mb-6">
-            Enter your Supabase credentials to enable real-time collaboration.
-          </p>
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const formData = new FormData(e.currentTarget);
-            const url = formData.get('url') as string;
-            const key = formData.get('key') as string;
-            const name = formData.get('name') as string;
-            initializeSupabase(url, key, name);
-          }}>
-            <div className="mb-4">
-              <label className="block text-sm font-medium mb-2">Supabase URL</label>
-              <input
-                type="text"
-                name="url"
-                placeholder="https://xxxxx.supabase.co"
-                className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              />
-            </div>
-            <div className="mb-4">
-              <label className="block text-sm font-medium mb-2">Supabase Anon Key</label>
-              <input
-                type="text"
-                name="key"
-                placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              />
-            </div>
-            <div className="mb-6">
-              <label className="block text-sm font-medium mb-2">Your Name</label>
-              <input
-                type="text"
-                name="name"
-                placeholder="John Doe"
-                className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              />
-            </div>
-            <button
-              type="submit"
-              className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition"
-            >
-              Connect
-            </button>
-          </form>
-          <div className="mt-6 p-4 bg-blue-50 rounded text-sm">
-            <p className="font-medium mb-2">Database Setup Required:</p>
-            <p className="text-gray-700 mb-2">Create a table in Supabase:</p>
-            <pre className="bg-gray-800 text-white p-2 rounded text-xs overflow-x-auto">
-{`CREATE TABLE canvas_elements (
-  id BIGSERIAL PRIMARY KEY,
-  room_id TEXT NOT NULL,
-  element_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  tool TEXT NOT NULL,
-  points JSONB,
-  color TEXT,
-  thickness INTEGER,
-  fill_color TEXT,
-  start_point JSONB,
-  end_point JSONB,
-  timestamp BIGINT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);`}
-            </pre>
-          </div>
-        </div>
-      </div>
-    );
+ // Delete key handler
+ const deleteSelected = () => {
+  if (selectedElement) {
+    setElements(prev => prev.filter(el => el.id !== selectedElement));
+    setSelectedElement(null);
   }
+};
+
+
+ useEffect(() => {
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedElement) {
+      deleteSelected();
+    }
+  };
+  window.addEventListener('keydown', handleKeyDown);
+  return () => window.removeEventListener('keydown', handleKeyDown);
+}, [selectedElement]);
 
   return (
-    <div 
+    <div
       className="relative h-screen w-full bg-white flex overflow-hidden"
       onContextMenu={(e) => e.preventDefault()}
       onMouseLeave={() => setIsPanning(false)}
     >
+      <div className="absolute top-0 left-0 w-full  z-20 bg-white">
+        <BoardNavbar activeUsers={activeCursors.size + 1} isConnected={isConnected} />
+      </div>
+      {isLoading && <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white/60 h-full w-full flex items-center justify-center">
+        <Loader2 className="animate-spin animate-fade-in" />
+      </div>}
       {/* Connection Status */}
-      <div className="absolute top-4 right-4 flex items-center gap-2 bg-white px-3 py-2 rounded-lg shadow-lg border border-gray-200 z-10">
+      {/* <div className="absolute top-4 right-4 flex items-center gap-2 bg-white px-3 py-2 rounded-lg shadow-lg border border-gray-200 z-10">
         <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
         <span className="text-sm">{isConnected ? 'Connected' : 'Disconnected'}</span>
         <Users size={16} className="ml-2" />
         <span className="text-sm">{activeCursors.size + 1}</span>
-      </div>
+      </div> */}
 
       {/* Left Sidebar */}
-      <div className="absolute left-7 top-7 w-12 bg-white rounded-lg shadow-lg border border-gray-200 px-2 py-2 flex flex-col items-center gap-2.5 z-10">
-        <button
+      <div className="absolute left-5 top-16 w-12 bg-white rounded-lg shadow-lg border border-gray-200 px-2 py-2 flex flex-col items-center gap-2.5 z-10">
+
+      <button
           onClick={() => setTool('select')}
-          className={`size-8 flex items-center justify-center rounded hover:bg-gray-100 ${tool === 'select' ? 'bg-gray-200' : ''}`}
+          className={`size-8 flex items-center justify-center rounded hover:bg-gray-100 ${tool === 'select' ? 'bg-blue-100 text-blue-600' : ''}`}
           title="Select"
         >
-          <Hand size={20} />
+          <MousePointer size={20} />
         </button>
-        
         <button
           onClick={() => setTool('pan')}
           className={`size-8 flex items-center justify-center rounded hover:bg-gray-100 ${tool === 'pan' ? 'bg-gray-200' : ''}`}
@@ -711,110 +853,127 @@ const InfiniteCanvas: React.FC = () => {
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
         onWheel={handleWheel}
-        className="flex-1 cursor-crosshair"
-        style={{ cursor: tool === 'pan' ? 'grab' : 'crosshair', marginLeft: '64px' }}
+        className="flex-1"
+        style={{ 
+          cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair',
+          marginLeft: '64px'
+        }}
       />
 
-    {/* Bottom Toolbar */}
-    <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-white rounded-lg shadow-lg border border-gray-200 px-2 py-2 flex items-center gap-1 z-10">
-      {/* Color picker - always visible */}
-      <div className="flex items-center gap-1 pr-2 border-r border-gray-200">
-        <input
-          type="color"
-          value={color}
-          onChange={(e) => setColor(e.target.value)}
-          className="w-6 h-6 rounded cursor-pointer border-0"
-          style={{ background: color }}
-          title="Stroke Color"
-        />
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" className="text-gray-400">
-          <path d="M2 4L5 7L8 4H2Z" />
-        </svg>
-      </div>
+      {/* Bottom Toolbar */}
+      <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-white rounded-lg shadow-lg border border-gray-200 px-2 py-2 flex items-center gap-1 z-10">
+        {/* Color picker - always visible */}
+        <div className="flex items-center gap-1 pr-2 border-r border-gray-200">
+          <input
+            type="color"
+            value={color}
+            onChange={(e) => setColor(e.target.value)}
+            className="w-6 h-6 rounded cursor-pointer border-0"
+            style={{ background: color }}
+            title="Stroke Color"
+          />
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" className="text-gray-400">
+            <path d="M2 4L5 7L8 4H2Z" />
+          </svg>
+        </div>
+        
+        {/* Tool-specific options */}
+        {(tool === 'pen' || tool === 'eraser') && (
+          <>
+            <button className="px-3 py-1 text-sm hover:bg-gray-100 rounded flex items-center gap-1">
+              <Pen size={14} />
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" className="text-gray-400">
+                <path d="M2 4L5 7L8 4H2Z" />
+              </svg>
+            </button>
+          </>
+        )}
 
-      {/* Tool-specific options */}
-      {(tool === 'pen' || tool === 'eraser') && (
-        <>
-          <button className="px-3 py-1 text-sm hover:bg-gray-100 rounded flex items-center gap-1">
-            <Pen size={14} />
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" className="text-gray-400">
-              <path d="M2 4L5 7L8 4H2Z" />
-            </svg>
-          </button>
-        </>
-      )}
+        {(tool === 'rectangle' || tool === 'circle' || tool === 'triangle') && (
+          <>
+            <div className="flex items-center gap-1 pr-2 border-r border-gray-200">
+              <input
+                type="color"
+                value={fillColor}
+                onChange={(e) => setFillColor(e.target.value)}
+                className="w-6 h-6 rounded cursor-pointer border-0"
+                style={{ background: fillColor }}
+                title="Fill Color"
+              />
+            </div>
+          </>
+        )}
 
-      {(tool === 'rectangle' || tool === 'circle' || tool === 'triangle') && (
-        <>
-          <div className="flex items-center gap-1 pr-2 border-r border-gray-200">
+        {/* Thickness slider */}
+        {(tool === 'pen' || tool === 'line' || tool === 'rectangle' || tool === 'circle' || tool === 'triangle') && (
+          <div className="flex items-center gap-2 px-2">
             <input
-              type="color"
-              value={fillColor}
-              onChange={(e) => setFillColor(e.target.value)}
-              className="w-6 h-6 rounded cursor-pointer border-0"
-              style={{ background: fillColor }}
-              title="Fill Color"
+              type="range"
+              min="1"
+              max="20"
+              value={thickness}
+              onChange={(e) => setThickness(Number(e.target.value))}
+              className="w-20 h-1"
             />
           </div>
-        </>
-      )}
+        )}
 
-      {/* Thickness slider */}
-      {(tool === 'pen' || tool === 'line' || tool === 'rectangle' || tool === 'circle' || tool === 'triangle') && (
-        <div className="flex items-center gap-2 px-2">
-          <input
-            type="range"
-            min="1"
-            max="20"
-            value={thickness}
-            onChange={(e) => setThickness(Number(e.target.value))}
-            className="w-20 h-1"
-          />
+        {/* Action buttons */}
+        <div className="flex items-center gap-1 pl-2 border-l border-gray-200">
+        {selectedElement && (
+            <button
+              onClick={deleteSelected}
+              className="px-3 py-1 text-sm bg-red-50 text-red-600 rounded hover:bg-red-100"
+              title="Delete Selected"
+            >
+              Delete
+            </button>
+          )}
+          <button
+            onClick={undo}
+            disabled={historyIndex <= 0}
+            className={`p-2 rounded hover:bg-gray-100 ${historyIndex <= 0 ? 'opacity-30 cursor-not-allowed' : ''}`}
+            title="Undo"
+          >
+            <RotateCcw size={16} />
+          </button>
+          <button
+            onClick={redo}
+            disabled={historyIndex <= 0}
+
+            className={`p-2 rounded hover:bg-gray-100 ${historyIndex >= 0 ? 'opacity-30 cursor-not-allowed' : ''}`}
+            title="Redo"
+          >
+            <RotateCw size={16} />
+          </button>
+          <button
+            className="p-2 rounded hover:bg-gray-100"
+            title="More Options"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <circle cx="3" cy="8" r="1.5" />
+              <circle cx="8" cy="8" r="1.5" />
+              <circle cx="13" cy="8" r="1.5" />
+            </svg>
+          </button>
+          <button
+            onClick={clearCanvas}
+            className="p-2 rounded hover:bg-gray-100"
+            title="Clear Canvas"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <rect x="3" y="5" width="10" height="9" rx="1" />
+              <path d="M2 5h12M6 3h4" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      {selectedElement && (
+        <div className="absolute top-16 right-5 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-sm text-blue-800 z-10">
+          Selected • Press Delete or click Delete button to remove
         </div>
       )}
-
-      {/* Action buttons */}
-      <div className="flex items-center gap-1 pl-2 border-l border-gray-200">
-        <button
-          onClick={undo}
-          disabled={historyIndex <= 0}
-          className={`p-2 rounded hover:bg-gray-100 ${historyIndex <= 0 ? 'opacity-30 cursor-not-allowed' : ''}`}
-          title="Undo"
-        >
-          <RotateCcw size={16} />
-        </button>
-        <button
-          onClick={redo}
-          disabled={historyIndex <= 0}
-
-          className={`p-2 rounded hover:bg-gray-100 ${historyIndex >= 0 ? 'opacity-30 cursor-not-allowed' : ''}`}
-          title="Redo"
-        >
-          <RotateCw size={16} />
-        </button>
-        <button
-          className="p-2 rounded hover:bg-gray-100"
-          title="More Options"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <circle cx="3" cy="8" r="1.5" />
-            <circle cx="8" cy="8" r="1.5" />
-            <circle cx="13" cy="8" r="1.5" />
-          </svg>
-        </button>
-        <button
-          onClick={clearCanvas}
-          className="p-2 rounded hover:bg-gray-100"
-          title="Clear Canvas"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <rect x="3" y="5" width="10" height="9" rx="1" />
-            <path d="M2 5h12M6 3h4" strokeLinecap="round" />
-          </svg>
-        </button>
-      </div>
     </div>
-  </div>
   );
 };
 
